@@ -1,0 +1,43 @@
+/* English (Default) */
+
+/* Headers */
+"NEURO-CALM" = "NEURO-CALM";
+"LABORATORY" = "LABORATORY";
+"AUDIO_CHANNEL_SELECT" = "AUDIO CHANNEL SELECT";
+"ONLINE" = "ONLINE";
+"STANDBY" = "STANDBY";
+"NOISE_GENERATOR" = "NOISE GENERATOR";
+"MASTER_OUTPUT" = "MASTER OUTPUT";
+"CENTER" = "CENTER";
+"BANDWIDTH" = "BANDWIDTH";
+"TINNITUS_MATCHING" = "TINNITUS MATCHING";
+"NOTE_TITLE" = "NOTE";
+"NOTE_BODY" = "Volume should always remain below your tinnitus volume. The goal is not to mask the tone, but to make it feel less isolated.";
+
+/* Controls */
+"LEFT" = "LEFT";
+"RIGHT" = "RIGHT";
+"BOTH" = "BOTH";
+"START_NOISE" = "START THERAPY";
+"STOP_NOISE" = "STOP THERAPY";
+
+/* Presets */
+"CURRENT_PRESET" = "Current Preset";
+"SAVE_NEW_PRESET" = "Save as new Preset...";
+"SAVE_PRESET_TITLE" = "Save New Preset";
+"SAVE_PRESET_MSG" = "Enter a name for the current settings.";
+"SAVE" = "Save";
+"CANCEL" = "Cancel";
+"NAME_Placeholder" = "Name";
+"STANDARD" = "DEFAULT";
+
+/* Noise Types */
+"WHITE" = "WHITE";
+"PINK" = "PINK";
+"BROWN" = "BROWN";
+
+/* Delete Preset */
+"DELETE_PRESET" = "Delete Preset";
+"DELETE_CONFIRM_TITLE" = "Delete Preset?";
+"DELETE_CONFIRM_MSG" = "Are you sure you want to delete this preset permanently?";
+"DELETE" = "Delete";
