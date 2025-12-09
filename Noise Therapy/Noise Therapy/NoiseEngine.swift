@@ -222,11 +222,12 @@ final class NoiseEngine: ObservableObject {
     private func setupEngine() {
         // Output format (Hardware)
         let hwFormat = engine.outputNode.inputFormat(forBus: 0)
-        // Internal processing format (Mono for source nodes, then stereo for mixers)
-        let monoFormat = AVAudioFormat(
-            standardFormatWithSampleRate: hwFormat.sampleRate, channels: 1)!
+        // Ensure we use a standard stereo format for the entire chain to avoid any mono downmixing
+        let stereoFormat = AVAudioFormat(
+            standardFormatWithSampleRate: hwFormat.sampleRate, channels: 2)!
 
         // --- LEFT CHANNEL ---
+        // Configured to output stereo, but we will only write to the LEFT buffer
         leftSource = AVAudioSourceNode {
             [weak self] _, _, frameCount, audioBufferList -> OSStatus in
             guard let self = self else { return noErr }
@@ -236,6 +237,7 @@ final class NoiseEngine: ObservableObject {
         }
 
         // --- RIGHT CHANNEL ---
+        // Configured to output stereo, but we will only write to the RIGHT buffer
         rightSource = AVAudioSourceNode {
             [weak self] _, _, frameCount, audioBufferList -> OSStatus in
             guard let self = self else { return noErr }
@@ -251,21 +253,25 @@ final class NoiseEngine: ObservableObject {
         engine.attach(leftMixer)
         engine.attach(rightMixer)
 
-        // Wiring: Source -> EQ -> ChannelMixer (Panned) -> MainMixer
-        engine.connect(leftSource, to: leftEQ, format: monoFormat)
-        engine.connect(leftEQ, to: leftMixer, format: monoFormat)
-        engine.connect(leftMixer, to: mainMixer, format: monoFormat)  // Connect mono to main mixer
+        // Wiring: All Stereo now.
+        // Source (Stereo) -> EQ (Stereo) -> ChannelMixer (Stereo) -> MainMixer
 
-        engine.connect(rightSource, to: rightEQ, format: monoFormat)
-        engine.connect(rightEQ, to: rightMixer, format: monoFormat)
-        engine.connect(rightMixer, to: mainMixer, format: monoFormat)  // Connect mono to main mixer
+        // Left Chain
+        engine.connect(leftSource, to: leftEQ, format: stereoFormat)
+        engine.connect(leftEQ, to: leftMixer, format: stereoFormat)
+        engine.connect(leftMixer, to: mainMixer, format: stereoFormat)
 
-        // Set initial pan for channel mixers
+        // Right Chain
+        engine.connect(rightSource, to: rightEQ, format: stereoFormat)
+        engine.connect(rightEQ, to: rightMixer, format: stereoFormat)
+        engine.connect(rightMixer, to: mainMixer, format: stereoFormat)
+
+        // Set initial pan for channel mixers as a safeguard, though explicit buffer filling handles separation.
         leftMixer.pan = -1.0  // Full left
         rightMixer.pan = 1.0  // Full right
 
         // Apply initial volume scaling to main mixer (overall output)
-        mainMixer.outputVolume = 1.0  // Individual channel volumes will be controlled by leftMixer/rightMixer outputVolume
+        mainMixer.outputVolume = 1.0
     }
 
     private func render(
@@ -274,37 +280,66 @@ final class NoiseEngine: ObservableObject {
     ) -> OSStatus {
         let ablPointer = audioBufferList
 
-        // Determine settings for this channel
+        // Determine settings for this source's target channel
+        // Note: 'channel' here tells us WHICH source node called this (LeftSource or RightSource).
         let type: NoiseType
-
         if channel == .left {
             type = noiseTypeLeft ?? noiseTypeBase
-        } else {  // channel == .right
+        } else {
             type = noiseTypeRight ?? noiseTypeBase
         }
 
-        for frame in 0..<Int(frameCount) {
-            let sample: Float
-            switch type {
-            case .white:
-                sample = generateWhite()
-            case .pink:
-                sample =
-                    (channel == .left)
-                    ? generatePink(state: &pinkStateLeft) : generatePink(state: &pinkStateRight)
-            case .brown:
-                sample =
-                    (channel == .left)
-                    ? generateBrown(last: &brownLastLeft) : generateBrown(last: &brownLastRight)
-            }
+        // We expect 2 buffers because we are using stereoFormat.
+        // buffer[0] = Left, buffer[1] = Right
+        // If we are LeftSource, we fill buffer[0] and clear buffer[1].
+        // If we are RightSource, we clear buffer[0] and fill buffer[1].
 
-            // Fill all buffers (channels) of the current audioBufferList with the mono sample
-            for buffer in ablPointer {
-                let ptr = buffer.mData!.assumingMemoryBound(to: Float.self)
-                ptr[frame] = sample
+        let targetBufferIndex = (channel == .left) ? 0 : 1
+
+        // Safety check
+        if ablPointer.count < 2 {
+            // Fallback for some unexpected mono setup, though shouldn't happen with our stereoFormat.
+            // Just fill available buffers.
+            for frame in 0..<Int(frameCount) {
+                let sample = generateSample(for: type, channel: channel)
+                for buffer in ablPointer {
+                    let ptr = buffer.mData!.assumingMemoryBound(to: Float.self)
+                    ptr[frame] = sample
+                }
+            }
+            return noErr
+        }
+
+        // Get pointers to Left and Right buffers
+        let leftPtr = ablPointer[0].mData!.assumingMemoryBound(to: Float.self)
+        let rightPtr = ablPointer[1].mData!.assumingMemoryBound(to: Float.self)
+
+        for frame in 0..<Int(frameCount) {
+            let sample = generateSample(for: type, channel: channel)
+
+            if channel == .left {
+                leftPtr[frame] = sample
+                rightPtr[frame] = 0.0
+            } else {
+                leftPtr[frame] = 0.0
+                rightPtr[frame] = sample
             }
         }
         return noErr
+    }
+
+    // Helper to generate a single sample
+    private func generateSample(for type: NoiseType, channel: EarSetting) -> Float {
+        switch type {
+        case .white:
+            return generateWhite()
+        case .pink:
+            return (channel == .left)
+                ? generatePink(state: &pinkStateLeft) : generatePink(state: &pinkStateRight)
+        case .brown:
+            return (channel == .left)
+                ? generateBrown(last: &brownLastLeft) : generateBrown(last: &brownLastRight)
+        }
     }
 
     func start() {
