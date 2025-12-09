@@ -478,7 +478,7 @@ final class NoiseEngine: ObservableObject {
 
     func deletePreset(id: UUID) {
         presets.removeAll { $0.id == id }
-        } else if currentPresetId == id {
+        if currentPresetId == id {
             // If deleted preset was current, select first available
             self.currentPresetId = presets.first?.id
         }
