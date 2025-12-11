@@ -7,6 +7,7 @@ struct ContentView: View {
     @State private var showSaveAlert = false
     @State private var showDeleteAlert = false
     @State private var newPresetName = ""
+    @State private var isWarningAnimating = false
 
     init() {
         // Force dark mode for the app window to match theme
@@ -66,8 +67,9 @@ struct ContentView: View {
                     } label: {
                         HStack(spacing: 8) {
                             Text(
-                                engine.presets.first(where: { $0.id == engine.currentPresetId })?
-                                    .name.uppercased() ?? NSLocalizedString("STANDARD", comment: "")
+                                engine.presets.first(where: { $0.id == engine.currentPresetId }
+                                )?
+                                .name.uppercased() ?? NSLocalizedString("STANDARD", comment: "")
                             )
                             .font(Theme.labHeader)
                             Image(systemName: "chevron.down")
@@ -96,7 +98,8 @@ struct ContentView: View {
                                     .frame(width: 6, height: 6)
                                 Text(engine.isRunning ? "ONLINE" : "STANDBY")
                                     .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                    .foregroundColor(engine.isRunning ? Theme.active : Theme.warn)
+                                    .foregroundColor(
+                                        engine.isRunning ? Theme.active : Theme.warn)
                             }
                             .padding(.bottom, 20)
 
@@ -173,10 +176,30 @@ struct ContentView: View {
                 }
 
                 // --- Footer Action ---
-                VStack {
-                    StartButton(isRunning: $engine.isRunning) {
-                        engine.isRunning ? engine.stop() : engine.start()
+                VStack(spacing: 12) {
+                    if !engine.isHeadphonesConnected {
+                        Text("HEADPHONES_SUGGESTED")
+                            .font(Theme.labLabel)
+                            .foregroundStyle(Theme.warn)
+                            .opacity(isWarningAnimating ? 0.4 : 1.0)
+                            .onAppear {
+                                withAnimation(
+                                    Animation.easeInOut(duration: 1.0).repeatForever(
+                                        autoreverses: true)
+                                ) {
+                                    isWarningAnimating = true
+                                }
+                            }
                     }
+                    ActionButton(isRunning: engine.isRunning) {
+
+                        if engine.isRunning {
+                            engine.stop()
+                        } else {
+                            engine.start()
+                        }
+                    }
+
                 }
                 .padding()
                 .background(Theme.background.opacity(0.8))

@@ -2,61 +2,6 @@ import AVFoundation
 import Combine
 import Foundation
 
-enum NoiseType: String, CaseIterable, Identifiable, Codable {
-    case white = "white"
-    case pink = "pink"
-    case brown = "brown"
-
-    var id: String { rawValue }
-
-    var localizedName: String {
-        switch self {
-        case .white: return NSLocalizedString("WHITE", comment: "White Noise")
-        case .pink: return NSLocalizedString("PINK", comment: "Pink Noise")
-        case .brown: return NSLocalizedString("BROWN", comment: "Brown Noise")
-        }
-    }
-}
-
-enum EarSetting: String, CaseIterable, Identifiable {
-    case both = "both"
-    case left = "left"
-    case right = "right"
-
-    var id: String { rawValue }
-
-    var localizedName: String {
-        switch self {
-        case .both: return NSLocalizedString("BOTH", comment: "Both Ears")
-        case .left: return NSLocalizedString("LEFT", comment: "Left Ear")
-        case .right: return NSLocalizedString("RIGHT", comment: "Right Ear")
-        }
-    }
-}
-
-struct Preset: Codable, Identifiable, Hashable {
-    var id: UUID = UUID()
-    var name: String
-
-    // Global / Default
-    var noiseType: NoiseType
-    var volume: Float
-    var centerFrequency: Float
-    var bandwidth: Float
-
-    // Left Overrides
-    var noiseTypeLeft: NoiseType?
-    var volumeLeft: Float?
-    var centerFrequencyLeft: Float?
-    var bandwidthLeft: Float?
-
-    // Right Overrides
-    var noiseTypeRight: NoiseType?
-    var volumeRight: Float?
-    var centerFrequencyRight: Float?
-    var bandwidthRight: Float?
-}
-
 final class NoiseEngine: ObservableObject {
     private let engine = AVAudioEngine()
 
@@ -196,25 +141,104 @@ final class NoiseEngine: ObservableObject {
     private var brownLastRight: Float = 0.0
     private var pinkStateRight: [Float] = Array(repeating: 0, count: 7)
 
+    @Published var isHeadphonesConnected: Bool = false
+
     init() {
         mainMixer = engine.mainMixerNode
 
         setupAudioSession()
         setupEngine()
+        setupRouteMonitoring()
 
         // Load presets after setup
         loadPresets()
         updateAudioState()  // Apply initial loaded preset or default state
+
+        // Initial check
+        checkHeadphoneConnection()
     }
 
     private func setupAudioSession() {
-        #if os(iOS)
+        #if os(iOS) || targetEnvironment(macCatalyst)
             let session = AVAudioSession.sharedInstance()
             do {
-                try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+                // .playback category defaults to high-quality output (AirPlay/A2DP allowed).
+                // .allowBluetooth/.allowBluetoothA2DP are only valid for .playAndRecord.
+                try session.setCategory(
+                    .playback, mode: .default,
+                    options: [.mixWithOthers])
                 try session.setActive(true)
             } catch {
-                print("AudioSession error: \(error)")
+                print("AudioSession error (Safe to ignore on macOS if sound plays): \(error)")
+            }
+        #endif
+    }
+
+    private func setupRouteMonitoring() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleRouteChange),
+            name: AVAudioSession.routeChangeNotification,
+            object: AVAudioSession.sharedInstance()
+        )
+    }
+
+    @objc private func handleRouteChange(notification: Notification) {
+        checkHeadphoneConnection()
+
+        guard let userInfo = notification.userInfo,
+            let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
+            let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue)
+        else { return }
+
+        // If device disconnected or we just determined no headphones are connected
+        if reason == .oldDeviceUnavailable || !isHeadphonesConnected {
+            if isRunning && !isHeadphonesConnected {
+                print("Headphones disconnected, stopping therapy.")
+                stop()
+            }
+        }
+    }
+
+    private func checkHeadphoneConnection() {
+        #if os(iOS)
+            // On iOS App on Mac (Designed for iPhone/iPad), os(iOS) is true, but behavioral is Mac-like.
+            // We should detect if we are running in that environment.
+            let isiOSAppOnMac = ProcessInfo.processInfo.isiOSAppOnMac
+
+            if isiOSAppOnMac {
+                print("Debug: Running as iOS App on Mac. Bypassing strict headphone check.")
+                DispatchQueue.main.async { self.isHeadphonesConnected = true }
+                return
+            }
+
+            // Real iOS device logic
+            try? AVAudioSession.sharedInstance().setActive(true)
+
+            let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
+            let headphonePortTypes: [AVAudioSession.Port] = [
+                .headphones,
+                .bluetoothA2DP,
+                .bluetoothLE,
+                .bluetoothHFP,
+                .airPlay,
+            ]
+
+            let connected = outputs.contains { headphonePortTypes.contains($0.portType) }
+
+            if !connected {
+                let portNames = outputs.map { $0.portType.rawValue }.joined(separator: ", ")
+                print("Debug: No headphones detected. Current outputs: [\(portNames)]")
+            }
+
+            DispatchQueue.main.async {
+                self.isHeadphonesConnected = connected
+            }
+        #else
+            // macOS (Native or unknown): Bypass check.
+            print("Debug: Non-iOS platform detected. Bypassing headphone check.")
+            DispatchQueue.main.async {
+                self.isHeadphonesConnected = true
             }
         #endif
     }
@@ -294,8 +318,6 @@ final class NoiseEngine: ObservableObject {
         // If we are LeftSource, we fill buffer[0] and clear buffer[1].
         // If we are RightSource, we clear buffer[0] and fill buffer[1].
 
-        let targetBufferIndex = (channel == .left) ? 0 : 1
-
         // Safety check
         if ablPointer.count < 2 {
             // Fallback for some unexpected mono setup, though shouldn't happen with our stereoFormat.
@@ -344,6 +366,16 @@ final class NoiseEngine: ObservableObject {
 
     func start() {
         guard !engine.isRunning else { return }
+
+        // Ensure session is setup/active
+        setupAudioSession()
+
+        // Double check headphones (just for status, not blocking)
+        checkHeadphoneConnection()
+
+        // We no longer block start() if headphones are missing,
+        // effectively allowing playback on speakers if user desires.
+
         do {
             try engine.start()
             isRunning = true

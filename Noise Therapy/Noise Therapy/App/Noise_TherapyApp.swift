@@ -12,6 +12,8 @@ struct Noise_TherapyApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+//            HeadphoneStatusView()
+            
         }
     }
 }
